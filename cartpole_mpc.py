@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import time
 
 def main():
-    dt = 0.1
+    dt = 0.01
     N = 100
     pole_length = 1
     cart_mass = 1
@@ -67,6 +67,7 @@ def main():
     # Force Constraints
     prog.AddBoundingBoxConstraint(-100, 100, qdd)
 
+    # Initial Condition Constraints
     ICs = np.zeros((2,2))
     ICs[0][1] = np.pi
     prog.AddConstraint(eq(q[0], ICs[0, :]))
@@ -91,7 +92,7 @@ def main():
         # theta dot dot
         prog.AddConstraint(
             eq(qd[i][1], 
-               (qd[i-1][1] + (-qdd[i-1] * cos(q[i-1][1]) - pole_mass * pole_length * pow(qd[i-1][1], 2) * cos(q[i-1][1]) * sin(q[i-1][1]) - (cart_mass + pole_mass) * g * sin(q[i-1][1])) / (pole_length * (cart_mass + pole_mass * pow(sin(q[i-1][1]), 2))))
+               (qd[i-1][1] + (-qdd[i-1] * cos(q[i-1][1]) - pole_mass * pole_length * pow(qd[i-1][1], 2) * cos(q[i-1][1]) * sin(q[i-1][1]) - (cart_mass + pole_mass) * g * sin(q[i-1][1])) / (pole_length * (cart_mass + pole_mass * pow(sin(q[i-1][1]), 2))) * dt)
             )
         )
 
@@ -99,10 +100,10 @@ def main():
     goal = np.zeros((2,2))
     for i in range(N):
         w_angle = 100.0
-        w_cartpos = 0.1
+        w_cartpos = 10.0
         w_velocity = 0.01
-        prog.AddQuadraticErrorCost((N - i) * np.diag([w_cartpos, w_angle]), goal[0, :], q[i, :])
-        prog.AddQuadraticErrorCost(w_velocity * (N - i) * np.eye(2), goal[0, :], qd[i, :])
+        prog.AddQuadraticErrorCost(np.diag([w_cartpos, w_angle]), goal[0, :], q[i, :])
+        prog.AddQuadraticErrorCost(w_velocity * np.eye(2), goal[0, :], qd[i, :])
 
     result = Solve(prog)
     q_opt = result.GetSolution(q)
@@ -119,6 +120,9 @@ def main():
     force_figure = plt.figure()
     plt.plot(qdd_opt)
     plt.title("Force")
+    xy_figure = plt.figure()
+    plt.plot(np.sin(q_opt[:,1]) + q_opt[:, 0], np.cos(q_opt[:,1]))
+    plt.title("Pole y vs x position")
     plt.show()
 
 if __name__ == '__main__':
