@@ -9,76 +9,113 @@ import numpy as np
 from pydrake.math import eq
 from pydrake.multibody.parsing import Parser
 from pydrake.multibody.plant import MultibodyPlant
+from pydrake.multibody.tree import SpatialInertia, PlanarJoint, RevoluteJoint, PrismaticJoint
 from pydrake.planning import DirectTranscription
 from pydrake.solvers import MathematicalProgram, Solve
 from pydrake.symbolic import sin, cos, pow
 
 class mpc:
-    def __init__(self, model):
-        self.dt = 0.1
-        self.N = 2
-        self.max_acc = 1.0
+    def __init__(self, model, data):
+        self.dt = 0.01
+        self.N = 25
+        self.max_acc = 200.0
         # [x, theta, xd, thetad]
         self.goal = np.zeros((4))
         self.goal[1] = np.pi # Want the pole to be straight up, still
         self.plant = MultibodyPlant(time_step = self.dt)
         # Todo: get the plant dynamics from the model
-        self.parser = Parser(self.plant).AddModelsFromUrl(url="package://drake/examples/multibody/cart_pole/cart_pole.sdf")
+        self.cart_mass = 1
+        self.pole_mass = 0.1
+        self.pole_length = 0.3
+        self.g = 9.81
+        cart = self.plant.AddRigidBody(
+            "Cart",
+            SpatialInertia.SolidBoxWithMass(
+                mass = self.cart_mass, 
+                lx = 1,
+                ly = 0.5,
+                lz = 1
+            )
+        )
+        pole = self.plant.AddRigidBody(
+            "Pole",
+            SpatialInertia.SolidCylinderWithMass(
+                mass = self.pole_mass, 
+                radius = 0.1,
+                length = self.pole_length,
+                unit_vector = [0, -1, 0]
+            )
+        )
+        # Let cart slide around in xy axis
+        self.plant.AddJoint(
+            PrismaticJoint(
+                "cart_slide", 
+                self.plant.world_frame(), 
+                cart.body_frame(),
+                [1, 0, 0]
+            )
+        )
+        self.plant.AddJoint(
+            RevoluteJoint(
+                "pole_to_cart",
+                cart.body_frame(),
+                pole.body_frame(),
+                [0, 0, 1]
+            )
+        )
         self.plant.Finalize()
         self.context = self.plant.CreateDefaultContext()
+
+    def run_mpc(self, model, data):
         self.prog = MathematicalProgram()
-        self.trajopt = DirectTranscription(
-                      self.plant, 
-                      self.context, 
-                      self.N, 
-                      input_port_index=self.plant.get_actuation_input_port().get_index(),
-                 )
+        self.q = self.prog.NewContinuousVariables(self.N, self.plant.num_positions(), "q") # x (m)
+        self.qd = self.prog.NewContinuousVariables(self.N, self.plant.num_velocities(), "qd") # v (m/s)
+        self.qdd = self.prog.NewContinuousVariables(self.N, 1, "qdd") # a (m/s/s) (force is only applied to base of cart)
+        # Force Constraints
+        self.prog.AddBoundingBoxConstraint(-self.max_acc, self.max_acc, self.qdd)
+        # Initial Condition Constraints
+        self.prog.AddConstraint(eq(self.q[0], data.qpos))
+        self.prog.AddConstraint(eq(self.qd[0], data.qvel))
 
-    def run_mpc(self, data):
-        q_init = np.append(data.qpos, data.qvel)
-        print(self.trajopt.initial_state())
-        n_rows = self.trajopt.initial_state().shape
-        print(n_rows)
-        print(q_init)
-        n_rows = q_init.shape
-        print(n_rows)
+        # Dynamic Constraints
+        # x is q[:, 0]
+        # theta is q[:, 1]
+        for i in range(1, self.N):
+            # x dot (velocity)
+            self.prog.AddConstraint(
+                eq(self.q[i], 
+                   self.q[i-1] + self.qd[i-1] * self.dt
+                )
+            )
+            # x dot dot
+            self.prog.AddConstraint(
+                eq(self.qd[i][0],
+                   (self.qd[i-1][0] + (self.qdd[i-1] + self.pole_mass * sin(self.q[i-1][1]) * (self.pole_length * pow(self.qd[i-1][1], 2) + self.g * cos(self.q[i-1][1]))) / (self.cart_mass + self.pole_mass * pow(sin(self.q[i-1][1]), 2)) * self.dt)
+                )
+            )
+            # theta dot dot
+            self.prog.AddConstraint(
+                eq(self.qd[i][1], 
+                   (self.qd[i-1][1] + (-self.qdd[i-1] * cos(self.q[i-1][1]) - self.pole_mass * self.pole_length * pow(self.qd[i-1][1], 2) * cos(self.q[i-1][1]) * sin(self.q[i-1][1]) - (self.cart_mass + self.pole_mass) * self.g * sin(self.q[i-1][1])) / (self.pole_length * (self.cart_mass + self.pole_mass * pow(sin(self.q[i-1][1]), 2))) * self.dt)
+                )
+            )
 
-        self.trajopt.prog().AddBoundingBoxConstraint(q_init, q_init, self.trajopt.initial_state())
-        self.trajopt.prog().AddQuadraticErrorCost(100 * np.eye(4), self.goal, self.trajopt.final_state())
-        sol = Solve(self.trajopt.prog())
-        acc_opt = sol.GetSolution()
-        print("Soln:", acc_opt)
-        data.qfrc_applied = [0, acc_opt[-1]]
+        # Goal cost
+        for i in range(self.N):
+            w_angle = 100.0
+            w_cartpos = 40.0
+            w_velocity = 0.01
+            self.prog.AddQuadraticErrorCost(np.diag([w_cartpos, w_angle]), self.goal[0:2], self.q[i, :])
+            self.prog.AddQuadraticErrorCost(w_velocity * np.eye(2), self.goal[2:], self.qd[i, :])
 
-#def controller(model, data):
-    #data.ctrl[0] = 0.5
-    #data.qfrc_applied # specify teh generalized force applied to each joint
-    #q = prog.NewContinuousVariables(N, plant.num_positions(), "q")
-    #qd = prog.NewContinuousVariables(N, plant.num_velocities(), "qd")
-    #qdd = prog.NewContinuousVariables(N, 1, "qdd")
-    # Bounds on Acceleration according to our max
-    #progAddBoundingBoxConstraint(-max_acc, max_acc, qdd)
-    # Initial Conditions
-    #prog.AddConstraint(eq(q[0, :], data.qpos))
-    #prog.AddConstraint(eq(qd[0, :], data.qvel))
-    #for i in range(1, N):
-        # Dynamics Constraints
-    #    prog.AddConstraint(eq(q[i], q[i-1] + qd[i-1] * dt))
-    #    prog.AddConstraint(eq(qd[i], qd[i-1] + qdd[i-1] * dt))
-        # Cost Function (mminimize goal position difference and final velocity)
-    #    prog.addQuadraticErrorCost(100 * np.sum(pow(q[i, :], 2)) + np.sum(pow(qd[i, :], 2)))    # Dynamics Constraints
-    #result = Solve(prog)
-    #data.qfrc_applied = result.GetSolution(qdd)
-#def mpc(model, data):
-    # Traj Opt Solution
-    #trajopt = DirectTranscription(plant, context, N, input_port_index=plant.get_actuation_input_port().get_index(),)
-    #trajopt.prog().AddBoundingBoxConstraint(data.qpos, data.qpos, trajopt.initial_state())
-    #trajopt.prog().AddBoundingQuadraticErrorCost(100 * np.eye(4), goal, trajopt.final_state())
-    #sol = Solve(trajopt.prog())
-    #acc_opt = sol.GetSolution(u)
-    #data.qfrc_applied = acc_opt
-
-    
+        result = Solve(self.prog)
+        self.q_opt = result.GetSolution(self.q)
+        self.qd_opt = result.GetSolution(self.qd)
+        self.qdd_opt = result.GetSolution(self.qdd)
+        force = self.qdd_opt[0] * (self.pole_mass + self.cart_mass)
+        print("State:", data.qpos, data.qvel)
+        print("Applied:", force)
+        data.qfrc_applied[0] = force
 
 model_path = os.path.expanduser("./cart_pole.xml")
 model = mujoco.MjModel.from_xml_path(model_path)
@@ -87,12 +124,10 @@ data = mujoco.MjData(model)
 #print("Data:", data)
 
 mujoco.mj_resetData(model, data)
-#mujoco.mjcb_control = controller;
-#mjcb_control = controller;
-data.qpos[1] = 1.67
+data.qpos[1] = 0
 print("data ctrl:", data.ctrl)
-myMPC = mpc(model)
-mjcb_control = myMPC.run_mpc(data)
+myMPC = mpc(model, data)
+mujoco.set_mjcb_control(myMPC.run_mpc)
 
 #viewer = mujoco.viewer.launch_passive(model, data)
 viewer = mujoco_viewer.MujocoViewer(model, data)
