@@ -39,5 +39,5 @@ MultibodyPlant.
 This then shows how to create a controller (aka a MathProg we Solve()) for the robot by using the plants properties and 
 
 ### mjc_cart_pole.py: Solving the Cart Pole control problem visually in Mujoco.
-Shows how to use the mujoco visualizer and use these principles to model and solve the controller using [MPC](https://en.wikipedia.org/wiki/Model_predictive_control) as our control scheme.
+Shows how to use the [mujoco](https://mujoco.readthedocs.io/en/stable/overview.html) [visualizer](https://mujoco.readthedocs.io/en/stable/python.html#passive-viewer) and use these principles to model and solve the controller using [MPC](https://en.wikipedia.org/wiki/Model_predictive_control) as our control scheme.
 
