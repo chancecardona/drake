@@ -26,7 +26,7 @@ We then have a
     Which models the cost as the distance between the goal and the current state quadratically
     so we can use [quadratic numerical optimization techniques](https://en.wikipedia.org/wiki/Quadratic_programming).
 We also set some basic constraints to set the boundary conditions (initial states) and dynamic constraints.
-We add (newton's method)[https://en.wikipedia.org/wiki/Newton%27s_method] as a constraint so we are really solving the lagrangian with the optimization.
+We add [newton's method](https://en.wikipedia.org/wiki/Newton%27s_method) as a constraint so we are really solving the lagrangian with the optimization.
 
 ### ik.py: Inverse Kinematics 
 Uses MathematicalProgram in a real context. Namely loads a robot arm via SDF as a 
@@ -40,4 +40,6 @@ This then shows how to create a controller (aka a MathProg we Solve()) for the r
 
 ### mjc_cart_pole.py: Solving the Cart Pole control problem visually in Mujoco.
 Shows how to use the [mujoco](https://mujoco.readthedocs.io/en/stable/overview.html) [visualizer](https://mujoco.readthedocs.io/en/stable/python.html#passive-viewer) and use these principles to model and solve the controller using [MPC](https://en.wikipedia.org/wiki/Model_predictive_control) as our control scheme.
+cart_pole.urdf is a urdf modeling this simple cartpole.
+The prototypes folder lists older examples, that we ultimately solved the lagrangian dynamics equations of motion, but were untenable due to minor differences between the Drake MultibodyPlant and the XML we were using to model the cartpole in mujoco.
 
